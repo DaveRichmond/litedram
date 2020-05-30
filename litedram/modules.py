@@ -369,6 +369,14 @@ class M12L16161A(SDRModule):
     technology_timings = _TechnologyTimings(tREFI=64e6/4096, tWTR=(2, None), tCCD=(1, None), tRRD=(None, 10))
     speedgrade_timings = {"default": _SpeedgradeTimings(tRP=15, tRCD=15, tWR=15, tRFC=(None, 55), tFAW=None, tRAS=40)}
 
+class W9825G6KH(SDRModule):
+    # geometry
+    nbanks = 4
+    nrows = 8192
+    ncols = 512
+    # timings (-6)
+    technology_timings = _TechnologyTimings(tREFI=64e6/8192, tWTR=(2, None), tCCD=(1, None), tRRD=None)
+    speedgrade_timings = {"default": _SpeedgradeTimings(tRP=15, tRCD=15, tWR=2, tRFC=(None, 60), tFAW=None, tRAS=42)}
 # DDR ----------------------------------------------------------------------------------------------
 
 class DDRModule(SDRAMModule):                     memtype = "DDR"
