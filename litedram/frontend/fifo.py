@@ -1,12 +1,15 @@
-# This file is Copyright (c) 2018-2019 Florent Kermarrec <florent@enjoy-digital.fr>
+# This file is Copyright (c) 2018-2020 Florent Kermarrec <florent@enjoy-digital.fr>
+# This file is Copyright (c) 2020 Antmicro <www.antmicro.com>
 # License: BSD
 
-from litex.gen import *
+from migen import *
 
 from litex.soc.interconnect import stream
 
+from litedram.common import LiteDRAMNativePort
 from litedram.frontend import dma
 
+# Helpers ------------------------------------------------------------------------------------------
 
 def _inc(signal, modulo):
     if modulo == 2**len(signal):
@@ -18,9 +21,10 @@ def _inc(signal, modulo):
             signal.eq(signal + 1)
         )
 
+# LiteDRAMFIFOCtrl ---------------------------------------------------------------------------------
 
 class _LiteDRAMFIFOCtrl(Module):
-    def __init__(self, base, depth, read_threshold, write_threshold):
+    def __init__(self, base, depth):
         self.base  = base
         self.depth = depth
         self.level = Signal(max=depth+1)
@@ -28,14 +32,14 @@ class _LiteDRAMFIFOCtrl(Module):
         # # #
 
         # To write buffer
-        self.writable = Signal()
+        self.writable      = Signal()
         self.write_address = Signal(max=depth)
 
         # From write buffer
         self.write = Signal()
 
         # To read buffer
-        self.readable = Signal()
+        self.readable     = Signal()
         self.read_address = Signal(max=depth)
 
         # From read buffer
@@ -61,36 +65,40 @@ class _LiteDRAMFIFOCtrl(Module):
         ]
 
         self.comb += [
-            self.writable.eq(self.level < write_threshold),
-            self.readable.eq(self.level > read_threshold)
+            self.writable.eq(self.level < depth),
+            self.readable.eq(self.level > 0)
         ]
 
+# LiteDRAMFIFOWriter -------------------------------------------------------------------------------
 
 class _LiteDRAMFIFOWriter(Module):
-    def __init__(self, data_width, port, ctrl):
+    def __init__(self, data_width, port, ctrl, fifo_depth=32):
         self.sink = sink = stream.Endpoint([("data", data_width)])
 
         # # #
 
-        self.submodules.writer = writer = dma.LiteDRAMDMAWriter(port, fifo_depth=32)
+        self.submodules.writer = writer = dma.LiteDRAMDMAWriter(port, fifo_depth=fifo_depth)
         self.comb += [
             writer.sink.valid.eq(sink.valid & ctrl.writable),
             writer.sink.address.eq(ctrl.base + ctrl.write_address),
             writer.sink.data.eq(sink.data),
             If(writer.sink.valid & writer.sink.ready,
-                ctrl.write.eq(1),
                 sink.ready.eq(1)
-            )
+            ),
+            If(port.wdata.valid & port.wdata.ready,
+                ctrl.write.eq(1)
+            ),
         ]
 
+# LiteDRAMFIFOReader -------------------------------------------------------------------------------
 
 class _LiteDRAMFIFOReader(Module):
-    def __init__(self, data_width, port, ctrl):
+    def __init__(self, data_width, port, ctrl, fifo_depth=32):
         self.source = source = stream.Endpoint([("data", data_width)])
 
         # # #
 
-        self.submodules.reader = reader = dma.LiteDRAMDMAReader(port, fifo_depth=32)
+        self.submodules.reader = reader = dma.LiteDRAMDMAReader(port, fifo_depth=fifo_depth)
         self.comb += [
             reader.sink.valid.eq(ctrl.readable),
             reader.sink.address.eq(ctrl.base + ctrl.read_address),
@@ -100,23 +108,23 @@ class _LiteDRAMFIFOReader(Module):
         ]
         self.comb += reader.source.connect(source)
 
+# LiteDRAMFIFO -------------------------------------------------------------------------------------
 
 class LiteDRAMFIFO(Module):
+    """LiteDRAM frontend that allows to use DRAM as a FIFO"""
     def __init__(self, data_width, base, depth, write_port, read_port,
-        read_threshold=None, write_threshold=None):
+        writer_fifo_depth = 32,
+        reader_fifo_depth = 32):
+        assert isinstance(write_port, LiteDRAMNativePort)
+        assert isinstance(read_port,  LiteDRAMNativePort)
         self.sink   = stream.Endpoint([("data", data_width)])
         self.source = stream.Endpoint([("data", data_width)])
 
         # # #
 
-        if read_threshold is None:
-            read_threshold = 0
-        if write_threshold is None:
-            write_threshold = depth
-
-        self.submodules.ctrl   = _LiteDRAMFIFOCtrl(base, depth, read_threshold, write_threshold)
-        self.submodules.writer = _LiteDRAMFIFOWriter(data_width, write_port, self.ctrl)
-        self.submodules.reader = _LiteDRAMFIFOReader(data_width, read_port, self.ctrl)
+        self.submodules.ctrl   = _LiteDRAMFIFOCtrl(base, depth)
+        self.submodules.writer = _LiteDRAMFIFOWriter(data_width, write_port, self.ctrl, writer_fifo_depth)
+        self.submodules.reader = _LiteDRAMFIFOReader(data_width, read_port,  self.ctrl, reader_fifo_depth)
         self.comb += [
             self.sink.connect(self.writer.sink),
             self.reader.source.connect(self.source)
